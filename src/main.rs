@@ -4,11 +4,11 @@ use num_bigint_dig::{BigInt, RandPrime};
 use rand::rngs::StdRng;
 use rand::FromEntropy;
 use std::fs::File;
+use std::path::Path;
 use std::io::{Read, Write};
 use std::error::Error;
 use clap::{Arg, SubCommand, ArgMatches};
 use clap::{app_from_crate, crate_name, crate_authors, crate_version, crate_description};
-
 const SUBCOMMAND_CREATE: &str = "create";
 const ARG_INPUT: &str = "INPUT";
 const ARG_SHARES_TO_CREATE: &str = "SHARES_TO_CREATE";
@@ -16,11 +16,18 @@ const ARG_SHARES_NEEDED: &str = "SHARES_NEEDED";
 const ARG_OUTPUT_STEM: &str = "OUTPUT_STEM";
 const ARG_WITH_PASSWORD: &str = "WITH_PASSWORD";
 const ARG_OUTPUT_PRIME: &str = "OUTPUT_PRIME";
+const ARG_OUTPUT_DIR: &str = "OUTPUT_DIR";
 
 const SUBCOMMAND_RECONSTRUCT: &str = "reconstruct";
 const ARG_OUTPUT_FILE: &str = "OUTPUT_FILE";
 const ARG_PRIME_INPUT_FILE: &str = "PRIME_INPUT_FILE";
 const ARG_INPUT_STEM: &str = "INPUT_STEM";
+const ARG_INPUT_DIR: &str = "INPUT_DIR";
+
+
+// Error message constants
+const CREATE_ABORT: &str = "Cannot finish creating shares, aborting";
+const RECONSTRUCT_ABORT: &str = "Cannot finish reconstruction, aborting";
 
 fn main() {
 
@@ -39,6 +46,12 @@ fn main() {
                                 .arg(Arg::with_name(ARG_SHARES_NEEDED)
                                      .index(3)
                                      .help("The number of shares needed to recreate the secret.")
+                                     .required(false))
+                                .arg(Arg::with_name(ARG_OUTPUT_DIR)
+                                     .short("d")
+                                     .long("out-dir")
+                                     .takes_value(true)
+                                     .help("The directory to output the shares and prime number")
                                      .required(false))
                                 .arg(Arg::with_name(ARG_OUTPUT_STEM)
                                      .short("s")
@@ -61,6 +74,7 @@ file.out.s1, file.out.s2, and so on.")
                                  "Sets the output file for the generated prime.")
                                      .required(false)))
 
+
                             // Reconstruct command:
                             .subcommand(SubCommand::with_name(SUBCOMMAND_RECONSTRUCT)
                                     .about("Reconstructs shares into a single file secret")
@@ -77,6 +91,12 @@ file.out.s1, file.out.s2, and so on.")
                                     .arg(Arg::with_name(ARG_OUTPUT_FILE)
                                          .index(3)
                                          .help("The file to output the generated secret")
+                                         .required(false))
+                                    .arg(Arg::with_name(ARG_INPUT_DIR)
+                                         .short("d")
+                                         .long("input-dir")
+                                         .takes_value(true)
+                                         .help("The directory the shares are located in")
                                          .required(false))
                                     .arg(Arg::with_name(ARG_PRIME_INPUT_FILE)
                                          .long("prime-file")
@@ -104,83 +124,185 @@ file.out.s1, file.out.s2, and so on.")
 fn run_with_args(args: &ArgMatches) {
     match args.subcommand() {
         (SUBCOMMAND_CREATE, Some(sub_matches)) => {
-            /* I prefer this version, however it has some ref issues that the version
-             * follwing this doesn't and if I could figure out a way to avoid that I would use this
-             * version as it's much cleaner and I can add comments explaining how each argument is
-             * handled and whatnot.
-             * TODO: Look into the error and see if there's an easy way around it:
-             * error[E0716]: temporary value dropped while borrowed
-   --> src/main.rs:117:83
-    |
-117 |               let prime_out_file = sub_matches.value_of(ARG_OUTPUT_PRIME).unwrap_or(format!("{}.pri
-me", 
-    |  ___________________________________________________________________________________^
-118 | |                                                     sub_matches.value_of(ARG_INPUT).unwrap()).as_
-ref());
-    | |                                                                                             ^    
-      - temporary value is freed at the end of this statement
-    | |_____________________________________________________________________________________________|
-    |                                                                                               creat
-es a temporary which is freed while still in use
-...
-126 |                                prime_out_file,
-    |                                -------------- borrow later used here
-    |
-    = note: consider using a `let` binding to create a longer lived value
-    = note: this error originates in a macro outside of the current crate (in Nightly builds, run with -Z
- external-macro-backtrace for more info)
+            
 
-             
+
+            // SOme defaults are declared here due to reference issues
+            let default_prime_out_file = format!("{}.prime",
+                                                sub_matches.value_of(ARG_INPUT).unwrap());
+            let default_out_dir = ".";
+
+            //Create subcommand main arguments
             let file = sub_matches.value_of(ARG_INPUT).unwrap();
             let out_file_stem = sub_matches.value_of(ARG_OUTPUT_STEM)
                                     .unwrap_or(sub_matches.value_of(ARG_INPUT).unwrap());
+
+            let out_dir = sub_matches.value_of(ARG_OUTPUT_DIR).unwrap_or(default_out_dir);
+            if let ValidPathType::ExistingFile | ValidPathType::Invalid | ValidPathType::NonExisting = 
+                check_path(out_dir) {
+
+                // Not given a valid output dir, print error and exit
+                println!("'{}' is not a valid directory", out_dir);
+                println!("{}", CREATE_ABORT);
+                return;
+            }
+
             let shares_to_create = sub_matches.value_of(ARG_SHARES_TO_CREATE)
                                                         .unwrap().parse::<usize>().unwrap();
 
             let shares_needed = sub_matches.value_of(ARG_SHARES_NEEDED).unwrap_or(
                         sub_matches.value_of(ARG_SHARES_TO_CREATE).unwrap()).parse::<usize>().unwrap();
-            let pass = sub_matches.is_present(ARG_WITH_PASSWORD);
-            
-            let prime_out_file = sub_matches.value_of(ARG_OUTPUT_PRIME).unwrap_or(format!("{}.prime", 
-                                                    sub_matches.value_of(ARG_INPUT).unwrap()).as_ref());
-            let prime_bits = 128;
+  
 
-            create_from_file(file,
+            // Error checking of number of shares values 
+            if shares_to_create < shares_needed {
+                println!("Shares to create must be greater than or equal to shares needed:
+                         Shares to create: {}
+                         Shares needed for reconstruction: {}",
+                         shares_to_create,
+                         shares_needed);
+                println!("{}", CREATE_ABORT);
+                return;
+            }
+            if shares_to_create < 2 || shares_needed < 2 {
+                println!("At least two shares are needed to split a secret:
+                         Shares to create: {}
+                         Shares needed for reconstruction: {}",
+                         shares_to_create,
+                         shares_needed);
+                println!("{}", CREATE_ABORT);
+                return;
+            }
+
+
+
+
+
+            let pass = sub_matches.is_present(ARG_WITH_PASSWORD);
+
+            
+            let prime_out_file = sub_matches.value_of(ARG_OUTPUT_PRIME)
+                                                        .unwrap_or(&default_prime_out_file);
+            let prime_bits = 64;
+
+            match create_from_file(file,
                              out_file_stem,
+                             out_dir,
                              shares_to_create,
                              shares_needed,
                              pass,
                              prime_out_file,
-                             prime_bits).unwrap();
+                             prime_bits) {
+                Ok(_) => {
+                    println!("Shares created and output to directory '{}'", out_dir);
+                }
+                Err(_) => {
+                    // Perform cleanup
+                },
+            }
                              
 
 
-            */
-            create_from_file(
-                sub_matches.value_of(ARG_INPUT).unwrap(),
-                sub_matches.value_of(ARG_OUTPUT_STEM)
-                        .unwrap_or(sub_matches.value_of(ARG_INPUT).unwrap()),
-                sub_matches.value_of(ARG_SHARES_TO_CREATE).unwrap().parse::<usize>().unwrap(),
-                sub_matches.value_of(ARG_SHARES_NEEDED).unwrap_or(
-                        sub_matches.value_of(ARG_SHARES_TO_CREATE).unwrap()).parse::<usize>().unwrap(),
-                sub_matches.is_present(ARG_WITH_PASSWORD),
-                sub_matches.value_of(ARG_OUTPUT_PRIME).unwrap_or(format!("{}.prime", 
-                                                    sub_matches.value_of(ARG_INPUT).unwrap()).as_ref()),
-                128
-                ).unwrap();
                 
         },
         (SUBCOMMAND_RECONSTRUCT, Some(sub_matches)) => {
-            reconstruct_from_shares(
-                sub_matches.value_of(ARG_INPUT_STEM).unwrap(),
-                sub_matches.value_of(ARG_PRIME_INPUT_FILE)
-                    .unwrap_or(format!("{}.prime", 
-                                       sub_matches.value_of(ARG_INPUT_STEM).unwrap()).as_ref()),
-                sub_matches.is_present(ARG_WITH_PASSWORD),
-                sub_matches.value_of(ARG_SHARES_NEEDED).unwrap().parse::<usize>().unwrap(),
-                sub_matches.value_of(ARG_OUTPUT_FILE)
-				.unwrap_or(format!("{}.out", sub_matches.value_of(ARG_INPUT_STEM).unwrap()).as_ref())
-            ).unwrap();
+            
+
+
+            // Main args
+            let stem = sub_matches.value_of(ARG_INPUT_STEM).unwrap();
+
+            let default_input_dir = ".";
+            let input_dir = sub_matches.value_of(ARG_INPUT_DIR).unwrap_or(default_input_dir);
+
+            let default_prime_in = format!("{}.prime", stem);
+            let prime_in = sub_matches.value_of(ARG_PRIME_INPUT_FILE)
+                    .unwrap_or(default_prime_in.as_ref());
+            let pass = sub_matches.is_present(ARG_WITH_PASSWORD);
+            let shares_needed = match sub_matches.value_of(ARG_SHARES_NEEDED).unwrap().parse::<usize>() {
+                Ok(val) => val,
+                Err(e) => {
+                    println!("Invalid number of shares, must be an positive number: {}", e);
+                    println!("{}", CREATE_ABORT);
+                    return;
+                }
+            };
+
+            let default_secret_out = format!("{}.out", stem);
+
+            // If an output file isn't specified, '.out' is appended to the STEM argument,
+            // If an output file is specified, it is verified to be a valid path, and 
+            // confirmation is requested when overwriting an existing file
+            let secret_out = match sub_matches.value_of(ARG_OUTPUT_FILE) {
+                Some(path) => path,
+                None => default_secret_out.as_ref(),
+            };
+
+            // Check the path and confirm overwrite if the file already exists, or exit if it's not
+            // a valid file path
+            match check_path(secret_out) {
+
+                ValidPathType::ExistingFile => {
+                    // File already exists, confirm overwerite
+                    let confirmation: bool;
+                    match dialoguer::Confirmation::new() 
+                        .with_text(format!("'{}' already exists, overwrite?", secret_out).as_ref())
+                        .interact() {
+
+                        Ok(answer) => {
+                            confirmation = answer;
+                        },
+                        Err(e) => {
+                            println!("Error creating overwrite dialogue: {}", e);
+                            println!("{}", CREATE_ABORT);
+                            return;
+                        }
+                    }
+       
+                    if !confirmation {
+                        // The user did not confirm
+                        println!("Overwrite of file '{}' not confirmed", secret_out);
+                        println!("{}", CREATE_ABORT);
+                        return;
+                    }
+                },
+
+                ValidPathType::ExistingDir => {
+                    // The output file can't be a directory, return
+                    println!("'{}' is a directory, not a file", secret_out);
+                    println!("{}", CREATE_ABORT);
+                    return;
+                },
+
+                ValidPathType::NonExisting => {
+                    // The path is valid and the file doesn't already exist
+                },
+
+                ValidPathType::Invalid => {
+                    // The path is not valid
+                    println!("'{}' is not a valid path", secret_out);
+                    println!("{}", CREATE_ABORT);
+                    return;
+                }
+
+            }
+
+            
+        
+            match reconstruct_from_shares(stem,
+                                    input_dir,
+                                    prime_in,
+                                    pass,
+                                    shares_needed,
+                                    secret_out) {
+                Ok(_) => {
+                    println!("Secret reconstructed at {}", secret_out);
+                },
+                Err(_) => {
+                    // Error information has already been printed out. Perform cleaning steps if
+                    // necessary
+                }
+            }
         },
         _ => () // No subcommand was run
     } 
@@ -193,6 +315,7 @@ es a temporary which is freed while still in use
 
 fn create_from_file(file: &str, 
                     out_file_stem: &str, 
+                    out_dir: &str,
                     shares_to_create: usize, 
                     shares_needed: usize, 
                     pass: bool, 
@@ -201,17 +324,22 @@ fn create_from_file(file: &str,
 
     let mut rand = StdRng::from_entropy();
     let prime: BigInt = rand.gen_prime(prime_bits).into();
-    let co_max_bits = 128usize;
-    let mut in_file = File::open(file)?;
+    let co_max_bits = 16usize;
+
+    let mut in_file = match File::open(file) {
+        Ok(file) => file,
+        Err(e) => {
+            println!("Error reading secret input file '{}': {}", file, e);
+            println!("{}", CREATE_ABORT);
+            return Err(Box::new(e));
+        }
+    };
 
     let mut secret = Vec::<u8>::new();
     in_file.read_to_end(&mut secret)?;
 
     let mut share_lists = create_share_lists_from_secrets(secret.as_slice(), &prime, shares_needed, 
                                                       shares_to_create, co_max_bits)?;
-    // If a password is given, set share_lists to the shuffled share lists returned by the shuffle
-    // op, else just set it to itself. Prevents an unecessary mut. TODO: Look into mutability,
-    // maybe there's a better way to do this.
     if pass { 
         let password = dialoguer::PasswordInput::new()
                                         .with_prompt("Password for shares")
@@ -221,6 +349,9 @@ fn create_from_file(file: &str,
     }
 
 
+    // Generate the file output paths
+    let file_out_paths = generate_share_file_paths(out_dir, out_file_stem, shares_to_create);
+    
 
     // The format of the shares will be as so:
     //      First 8 bytes: The number of individual shares in the file
@@ -229,7 +360,17 @@ fn create_from_file(file: &str,
     //          N bytes: Determined by the previous 4 bytes, the share itself.
     let mut i = 0;
     for share_list in share_lists {
-        let mut file_out = File::create(format!("{}.s{}", out_file_stem, i))?;
+
+        // Create the file for this share
+        // If the file cannot be created, print error information and abort.
+        let mut file_out = match File::create(&file_out_paths[i]) {
+            Ok(file) => file,
+            Err(e) => {
+                println!("Error creating share file '{}': {}", &file_out_paths[i], e);
+                println!("{}", CREATE_ABORT);
+                return Err(Box::new(e));
+            }
+        };
        
         // Write out the number of shares into the first 8 bytes of the file. Must convert to u64
         // to ensure cross platform functionality.
@@ -252,8 +393,17 @@ fn create_from_file(file: &str,
         }
     }
 
-    // Write the prime out into the prime file
-    let mut prime_out = File::create(prime_out_file)?;
+    // Now write the prime out to a file
+    // If the prime file cannot be written, print error information and abort reconstruction
+    let prime_out_path = generate_prime_file_path(out_dir, prime_out_file);
+    let mut prime_out = match File::create(&prime_out_path) {
+        Ok(file) => file,
+        Err(e) => {
+            println!("Error creating prime input file '{}': {}", prime_out_path, e);
+            println!("{}", CREATE_ABORT);
+            return Err(Box::new(e));
+        }
+    };
     let prime_bytes = prime.to_signed_bytes_be();
     prime_out.write_all(&(prime_bytes.len() as u32).to_be_bytes())?;
     prime_out.write_all(prime_bytes.as_slice())?;
@@ -265,17 +415,30 @@ fn create_from_file(file: &str,
 // TODO: When multiple files are allowed, use a tuple with two options, one with the single stem and
 // the other with a list of strs 
 fn reconstruct_from_shares(stem: &str, 
+                           input_dir: &str,
                            prime_in: &str,
                            pass: bool,
                            shares_needed: usize,
                            secret_out: &str) -> Result<(), Box<dyn Error>> {
     let mut share_lists: Vec<Vec<BigInt>> = Vec::with_capacity(shares_needed);
-
-    // This will be used for read operations when needing u32 and u64 values
     
+    let file_in_paths = generate_share_file_paths(input_dir, stem, shares_needed);
 
     for i in 0..shares_needed {
-        let mut share_file = File::open(format!("{}.s{}", stem, i))?;
+
+        // Open one of the share files
+        // If it cannot be read, print error information and abort.
+        let mut share_file = match File::open(&file_in_paths[i]) {
+            Ok(file) => file,
+            Err(e) => {
+                println!("Error reading in share file '{}': {}", &file_in_paths[i], e);
+                println!("{}", RECONSTRUCT_ABORT);
+                return Err(Box::new(e));
+
+            }
+
+
+        };
 
         let mut buf_8: [u8; 8] = [0; 8];
 
@@ -334,7 +497,15 @@ fn reconstruct_from_shares(stem: &str,
 
 
     // Now get the prime from the file
-    let mut prime_in_file = File::open(prime_in)?;
+    // If the prime file cannot be read, print error information and abort reconstruction
+    let mut prime_in_file = match File::open(generate_prime_file_path(input_dir, prime_in)) {
+        Ok(file) => file,
+        Err(e) => {
+            println!("Error reading prime input file: {}", e);
+            println!("{}", RECONSTRUCT_ABORT);
+            return Err(Box::new(e));
+        }
+    };
 
     // The first 4 bytes is the number of bytes for the prime.
     let mut buf_4: [u8; 4] = [0; 4];
@@ -358,5 +529,64 @@ fn reconstruct_from_shares(stem: &str,
 }
 
 
+#[derive(Debug)]
+enum ValidPathType {
+    ExistingFile, // The path leads to an existing file
+    ExistingDir, // The path leads to an existing directory
+    NonExisting, // No file or directory exists, but the path is valid
+    Invalid // The path is not valid, file doesn't exist and it's parent directory doesn't exist
+}
 
+
+fn check_path(path: &str) -> ValidPathType {
+    let path = Path::new(path);
+    if path.exists() {
+        if path.is_dir() {
+            return ValidPathType::ExistingDir;
+        }
+        else {
+            return ValidPathType::ExistingFile;
+        }
+    }
+    else {
+        let mut path_buf = path.to_path_buf();
+        path_buf.pop();
+        if path_buf.to_str().unwrap() == "" {
+            // The path was a nonexsting file in the current directory, since popping it off the
+            // buf led to an empty path
+            return ValidPathType::NonExisting;
+        }
+
+        if path_buf.is_dir() {
+            return ValidPathType::NonExisting;
+        }
+        else {
+            // If the path doesn't exist and it's parent doesn't exist, it's not a valid path
+            return ValidPathType::Invalid;
+        }
+    }
+}
+
+
+// Generates paths for the shares with in given dir with a given stem. 
+// It is assumed that dir is a valid directory, no checks are done.
+fn generate_share_file_paths(dir: &str, stem: &str, num_files: usize) -> Vec<String> {
+    let mut path_buf = Path::new(dir).to_path_buf();
+    let mut generated_paths: Vec<String> = Vec::with_capacity(num_files);
+
+    for i in 0..num_files {
+        path_buf.push(format!("{}.s{}", stem, i));
+        (&mut generated_paths).push(String::from(path_buf.to_str().unwrap()));
+        path_buf.pop();
+    }
+
+    generated_paths
+}
+
+// Generates the path for the prime file with the given dir and file path
+fn generate_prime_file_path(dir: &str, prime_file: &str) -> String {
+    let mut path_buf = Path::new(dir).to_path_buf();
+    path_buf.push(prime_file);
+    String::from(path_buf.to_str().unwrap())
+}
 
