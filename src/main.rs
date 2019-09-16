@@ -352,7 +352,6 @@ fn reconstruct_from_shares(stem: &str,
    
 
     // Now we have the reconstructed secret, write it to a file
-	dbg!(&secret_out);
     let mut secret_out_file = File::create(secret_out)?;
     secret_out_file.write_all(reconstructed_secret.as_slice())?;
     Ok(())
