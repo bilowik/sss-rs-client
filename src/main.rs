@@ -1,3 +1,23 @@
+/* TODO list: 
+ *  - Clean up error handling and feedback. Should not be split between the arg handler and the
+ *      create/reconstruct functions.
+ *      - As an aside to this, changing the 'stem' argument to a list of strings and then
+ *      generating them and confirming they exist and are readable (or are writable), is probably
+ *      the easiest path to this goal.
+ *   
+ *
+ *
+ *
+ *
+ *
+ *
+ *
+ *
+ *
+ */
+
+
+
 use sss_rs::*;
 use sss_rs::geometry::Point;
 use num_bigint_dig::{BigInt, RandPrime};
@@ -17,6 +37,7 @@ const ARG_OUTPUT_STEM: &str = "OUTPUT_STEM";
 const ARG_WITH_PASSWORD: &str = "WITH_PASSWORD";
 const ARG_OUTPUT_PRIME: &str = "OUTPUT_PRIME";
 const ARG_OUTPUT_DIR: &str = "OUTPUT_DIR";
+const ARG_CONFIRM_RECON: &str = "CONFIRM_RECON";
 
 const SUBCOMMAND_RECONSTRUCT: &str = "reconstruct";
 const ARG_OUTPUT_FILE: &str = "OUTPUT_FILE";
@@ -72,6 +93,12 @@ file.out.s1, file.out.s2, and so on.")
                                      .takes_value(true)
                                      .help(
                                  "Sets the output file for the generated prime.")
+                                     .required(false))
+                                .arg(Arg::with_name(ARG_CONFIRM_RECON)
+                                     .short("c")
+                                     .long("confirm")
+                                     .takes_value(false)
+                                     .help("Confirm the shares properly reconstruct to the secret")
                                      .required(false)))
 
 
@@ -119,8 +146,6 @@ file.out.s1, file.out.s2, and so on.")
 
 // This exists as a separate function so a GUI interface can be developed and make use of this 
 // in the future.
-// TODO: Only one subcommand can be called from a given app/subcommand so no need to call match and
-// check for each one, just use "subcommand" to return the sub command tuple and use that
 fn run_with_args(args: &ArgMatches) {
     match args.subcommand() {
         (SUBCOMMAND_CREATE, Some(sub_matches)) => {
@@ -134,6 +159,26 @@ fn run_with_args(args: &ArgMatches) {
 
             //Create subcommand main arguments
             let file = sub_matches.value_of(ARG_INPUT).unwrap();
+   
+            
+            match std::fs::metadata(file) {
+                Ok(metadata) => {
+                    if metadata.len() == 0 {
+                        println!("'{}' is an empty file. Secret cannot be an empty file. Aborting.", 
+                                 file);
+                        println!("Aborting");
+                        return;
+                    }
+                },
+                Err(e) => {
+                    println!("Error reading in secret input file '{}': {}", file, e);
+                    println!("Aborting");
+                    return;
+                }
+            }
+            
+
+
             let out_file_stem = sub_matches.value_of(ARG_OUTPUT_STEM)
                                     .unwrap_or(sub_matches.value_of(ARG_INPUT).unwrap());
 
@@ -197,12 +242,64 @@ fn run_with_args(args: &ArgMatches) {
                     println!("Shares created and output to directory '{}'", out_dir);
                 }
                 Err(_) => {
-                    // Perform cleanup
+                    // Error handling will likely be moved here in the future, for now the function
+                    // handles the error and prints out the information
+                    // TODO: Find a way to wrap around the errors generated within the
+                    // share/reconstruct functions with addtional infromation from the context
                 },
             }
-                             
 
+            // If the user specified the confirmation flag, do a test reconstruction and compare
+            // the original and the reconstructed secret for equivalence. 
+            if sub_matches.is_present(ARG_CONFIRM_RECON) {
+                let confirm_file_out = ".confirm_recon";
+                // Dry run the reconstruction process and confirm that the outputted secret is
+                // exactly the same as the input secret
+                println!("Beginning reconstruction test run, if you supplied a password, \
+                         you will have to reinput it. Incorrect passwords will result in a \
+                         reconstruction failure.");
+                if let Err(e) = reconstruct_from_shares(out_file_stem,
+                                        out_dir,
+                                        prime_out_file,
+                                        pass,
+                                        shares_needed,
+                                        confirm_file_out) {
+                    println!("Reconstruction process failed: {}", e);
+                    println!("Could not complete reconstruction confirmation, aborting.");
+                    return;
+                }
+    
+                let orig_bytes = match std::fs::read(file) {
+                    Ok(bytes) => bytes,
+                    Err(e) => {
+                        println!("Error reading in original secret '{}': {}", file, e);
+                        println!("Could not complete reconstruction confirmation, aborting.");
+                        return;
+                    }
+                };
 
+                let recon_bytes = match std::fs::read(confirm_file_out) {
+                    Ok(bytes) => bytes,
+                    Err(e) => {
+                        println!("Error reading in reconstructed secret '{}': {}", confirm_file_out, e);
+                        println!("Could not complete reconstruction confirmation, aborting.");
+                        return;
+                    }
+                };
+                
+                if orig_bytes != recon_bytes {
+                    println!("Test reconstruction FAILED! Did you input the right password?");
+                }
+                else {
+                    println!("Test reconstruction PASSED! The generates shares were successfully \
+                    reconstructed into the original secret.");
+                }
+
+                if let Err(e) = std::fs::remove_file(confirm_file_out) {
+                    println!("Could not clean up confirmation test file '{}': {}", confirm_file_out, e);
+                }
+
+            }
                 
         },
         (SUBCOMMAND_RECONSTRUCT, Some(sub_matches)) => {
@@ -299,8 +396,8 @@ fn run_with_args(args: &ArgMatches) {
                     println!("Secret reconstructed at {}", secret_out);
                 },
                 Err(_) => {
-                    // Error information has already been printed out. Perform cleaning steps if
-                    // necessary
+                    // Error handling will likely be moved here in the future, for now the function
+                    // handles the error and prints out the information
                 }
             }
         },
@@ -326,14 +423,7 @@ fn create_from_file(file: &str,
     let prime: BigInt = rand.gen_prime(prime_bits).into();
     let co_max_bits = 16usize;
 
-    let mut in_file = match File::open(file) {
-        Ok(file) => file,
-        Err(e) => {
-            println!("Error reading secret input file '{}': {}", file, e);
-            println!("{}", CREATE_ABORT);
-            return Err(Box::new(e));
-        }
-    };
+    let mut in_file = File::open(file).unwrap(); // Should not panic, since the file was checked already
 
     let mut secret = Vec::<u8>::new();
     in_file.read_to_end(&mut secret)?;
