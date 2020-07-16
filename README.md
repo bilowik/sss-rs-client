@@ -1,3 +1,7 @@
+# DO NOT USE, major bug found in the version of sss that was used. 
+
+
+
 # sss-rs-client
 A basic client to demonstrate the sss-rs library. Use at your own risk.
 
