@@ -36,11 +36,9 @@ const ARG_NO_CONFIRM_RECON: &str = "CONFIRM_RECON";
 const SUBCOMMAND_RECONSTRUCT: &str = "reconstruct";
 const ARG_OUTPUT_FILE: &str = "OUTPUT_FILE";
 const ARG_INPUTS: &str = "INPUTS";
-const ARG_INPUT_STEM: &str = "INPUT_STEM";
 
 // Error message constants
 const CREATE_ABORT: &str = "Cannot finish creating shares, aborting";
-const RECONSTRUCT_ABORT: &str = "Cannot finish reconstruction, aborting";
 
 fn main() {
     let matches = app_from_crate!()
@@ -186,6 +184,8 @@ fn run_with_args(args: &ArgMatches) {
                 .parse::<u8>()
                 .unwrap();
 
+            let confirm = sub_matches.is_present(ARG_NO_CONFIRM_RECON);
+
             // Error checking of number of shares values
             if shares_to_create < shares_needed {
                 println!(
@@ -210,6 +210,7 @@ fn run_with_args(args: &ArgMatches) {
 
             let secret = Secret::point_at_file(file);
 
+            // Create a vec of writable files for sharing.
             let mut dests: Vec<Box<dyn Write>> = (0..(shares_to_create as usize))
                 .map(|share_num| {
                     let path =
@@ -229,38 +230,28 @@ fn run_with_args(args: &ArgMatches) {
             share_to_writables(secret, &mut dests, shares_needed, shares_to_create, true)
                 .expect("Failed to share secret.");
 
-            return;
         }
         (SUBCOMMAND_RECONSTRUCT, Some(sub_matches)) => {
-            let input_files: Vec<Vec<u8>> = sub_matches
+            let mut src_len = 0u64;
+            let mut input_files: Vec<Box<dyn Read>> = sub_matches
                 .values_of(ARG_INPUTS)
                 .expect("No input values received?")
-                .map(|path| std::fs::read(path).expect("Could not read input file."))
+                .map(|path| {
+                    src_len = std::fs::metadata(&path).expect(&format!("Could not open file '{}'", &path)).len();
+                    Box::new(
+                    File::open(&path).expect(&format!("Could not open file '{}'", &path))) as Box<dyn Read> 
+                })
                 .collect();
+            
+            let confirm = sub_matches.is_present(ARG_NO_CONFIRM_RECON);
 
             let secret_out = sub_matches.value_of(ARG_OUTPUT_FILE).unwrap();
             let mut secret = Secret::point_at_file(secret_out);
             secret
-                .reconstruct(input_files, true)
+                .reconstruct_from_srcs(&mut input_files, src_len, true)
                 .expect("Reconstruction failed");
 
-            return;
         }
         _ => (), // No subcommand was run
     }
-}
-
-// Generates paths for the shares with in given dir with a given stem.
-// It is assumed that dir is a valid directory, no checks are done.
-fn generate_share_file_paths(dir: &str, stem: &str, num_files: usize) -> Vec<String> {
-    let mut path_buf = Path::new(dir).to_path_buf();
-    let mut generated_paths: Vec<String> = Vec::with_capacity(num_files);
-
-    for i in 0..num_files {
-        path_buf.push(format!("{}.s{}", stem, i));
-        (&mut generated_paths).push(String::from(path_buf.to_str().unwrap()));
-        path_buf.pop();
-    }
-
-    generated_paths
 }
