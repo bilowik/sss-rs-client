@@ -14,10 +14,5 @@ For usage/help, run:
 
 	- cargo run -- create -h
 
-	- cargo run -- reconstruct -h
+	- cargo run -- share -h
 
-	or
-
-	- ./target/debug/sss_client -h
-
-	- and so on..
