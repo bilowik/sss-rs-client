@@ -1,25 +1,6 @@
-/* TODO list:
- *  - Clean up error handling and feedback. Should not be split between the arg handler and the
- *      create/reconstruct functions.
- *      - As an aside to this, changing the 'stem' argument to a list of strings and then
- *      generating them and confirming they exist and are readable (or are writable), is probably
- *      the easiest path to this goal.
- *
- *
- *
- *
- *
- *
- *
- *
- *
- *
- */
-
 use clap::{app_from_crate, crate_authors, crate_description, crate_name, crate_version};
 use clap::{Arg, ArgMatches, SubCommand};
 use sss_rs::wrapped_sharing::*;
-use std::error::Error;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::Path;
@@ -227,7 +208,7 @@ fn run_with_args(args: &ArgMatches) {
                     ) as Box<dyn Write>
                 })
                 .collect();
-            share_to_writables(secret, &mut dests, shares_needed, shares_to_create, true)
+            share_to_writables(secret, &mut dests, shares_needed, shares_to_create, confirm)
                 .expect("Failed to share secret.");
 
         }
@@ -248,10 +229,10 @@ fn run_with_args(args: &ArgMatches) {
             let secret_out = sub_matches.value_of(ARG_OUTPUT_FILE).unwrap();
             let mut secret = Secret::point_at_file(secret_out);
             secret
-                .reconstruct_from_srcs(&mut input_files, src_len, true)
+                .reconstruct_from_srcs(&mut input_files, src_len, confirm)
                 .expect("Reconstruction failed");
 
         }
-        _ => (), // No subcommand was run
+        _ => (), // No subcommand was run?
     }
 }
