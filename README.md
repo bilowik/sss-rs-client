@@ -14,5 +14,5 @@ For usage/help, run:
 
 	- cargo run -- create -h
 
-	- cargo run -- share -h
+	- cargo run -- reconstruct -h
 
