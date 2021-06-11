@@ -1,6 +1,3 @@
-# DO NOT USE, major bug found in the version of sss that was used. 
-
-
 
 # sss-rs-client
 A basic client to demonstrate the sss-rs library. Use at your own risk.
@@ -16,8 +13,3 @@ For usage/help, run:
 
 	- cargo run -- reconstruct -h
 
-	or
-
-	- ./target/debug/sss_client -h
-
-	- and so on..
