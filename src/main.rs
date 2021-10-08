@@ -228,8 +228,7 @@ fn run_with_args(args: &ArgMatches) {
 
             let secret_out = sub_matches.value_of(ARG_OUTPUT_FILE).unwrap();
             let mut secret = Secret::point_at_file(secret_out);
-            secret
-                .reconstruct_from_srcs(&mut input_files, src_len, confirm)
+            reconstruct_from_srcs(&mut secret, &mut input_files, src_len, confirm)
                 .expect("Reconstruction failed");
 
         }
