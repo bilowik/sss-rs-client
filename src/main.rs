@@ -189,7 +189,6 @@ fn run_with_args(args: &ArgMatches) {
                 return;
             }
 
-            let secret = Secret::point_at_file(file);
 
             // Create a vec of writable files for sharing.
             let mut dests: Vec<Box<dyn Write>> = (0..(shares_to_create as usize))
@@ -208,7 +207,8 @@ fn run_with_args(args: &ArgMatches) {
                     ) as Box<dyn Write>
                 })
                 .collect();
-            share_to_writables(secret, &mut dests, shares_needed, shares_to_create, confirm)
+            let file_src = File::open(file).expect("Failed to open secret file for sharing");
+            share_to_writables(file_src, &mut dests, shares_needed, shares_to_create, confirm)
                 .expect("Failed to share secret.");
 
         }
@@ -227,8 +227,12 @@ fn run_with_args(args: &ArgMatches) {
             let confirm = sub_matches.is_present(ARG_NO_CONFIRM_RECON);
 
             let secret_out = sub_matches.value_of(ARG_OUTPUT_FILE).unwrap();
-            let mut secret = Secret::point_at_file(secret_out);
-            reconstruct_from_srcs(&mut secret, &mut input_files, src_len, confirm)
+            let secret_dest = std::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .open(secret_out)
+                .expect(&format!("Failed to open file {} for writing", secret_out));
+            reconstruct_from_srcs(secret_dest, &mut input_files, src_len, confirm)
                 .expect("Reconstruction failed");
 
         }
