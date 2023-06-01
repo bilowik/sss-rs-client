@@ -1,171 +1,125 @@
-use clap::{app_from_crate, crate_authors, crate_description, crate_name, crate_version};
-use clap::{Arg, ArgMatches, SubCommand};
+use clap::{Parser, Subcommand, ArgGroup};
 use sss_rs::wrapped_sharing::*;
 use std::fs::File;
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::PathBuf;
 
-const SUBCOMMAND_SHARE: &str = "share";
-const ARG_INPUT: &str = "INPUT";
-const ARG_SHARES_TO_CREATE: &str = "SHARES_TO_CREATE";
-const ARG_SHARES_NEEDED: &str = "SHARES_NEEDED";
-const ARG_OUTPUT_DIR: &str = "OUTPUT_DIR";
-const ARG_OUTPUTS: &str = "OUTPUTS";
-const ARG_OUTPUT_STEM: &str = "OUTPUT_STEM";
-const ARG_NO_CONFIRM_RECON: &str = "CONFIRM_RECON";
 
-const SUBCOMMAND_RECONSTRUCT: &str = "reconstruct";
-const ARG_OUTPUT_FILE: &str = "OUTPUT_FILE";
-const ARG_INPUTS: &str = "INPUTS";
+const CREATE_ABORT: &str = "Cannot finish creating shares";
 
-// Error message constants
-const CREATE_ABORT: &str = "Cannot finish creating shares, aborting";
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+#[command(group(
+        ArgGroup::new("dir_stem")
+            .conflicts_with("outputs")
+            .args(&["output_dir", "output_stem"])
+        )
+    )
+]
+#[command(group(
+        ArgGroup::new("output_options")
+            .conflicts_with("outputs")
+            .args(&["outputs", "dir_stem"])
+            .required(true)
+        )
+    )
+]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    Share {
+        #[arg(help="The file to create shares from")]
+        secret_input: PathBuf,
+
+        #[arg(help="The number of shares to create")]
+        shares_to_create: u8,
+
+        #[arg(help="The number of shares needed to reconstruct the original secret")]
+        shares_needed: u8,
+        
+        #[arg(short = 'd', long = "output-dir", help="The output directory")]
+        output_dir: Option<PathBuf>,
+        
+        #[arg(short = 's', long = "output-stem")]
+        output_stem: Option<String>,
+
+        
+        #[arg(short, long, help="List of output file names, entries must match <shares_to_create>")]
+        outputs: Option<Vec<PathBuf>>,
+
+        #[arg(short, long, help="Disable verifiable reconstruction")]
+        no_confirm: bool,
+    },
+    Reconstruct {
+        #[arg(help = "The file to write the reconstruct out to")]
+        recon_output: PathBuf,
+
+        #[arg(help = "List of files to use for reconstruction", required = true)]
+        secret_inputs: Vec<PathBuf>, 
+
+        #[arg(short, long, help="Disable verifiable reconstruction")]
+        no_confirm: bool,
+    },
+}
+
+
 
 fn main() {
-    let matches = app_from_crate!()
-        // Create command:
-        .subcommand(
-            SubCommand::with_name(SUBCOMMAND_SHARE)
-                .about("Creates shares from a given file.")
-                .arg(
-                    Arg::with_name(ARG_INPUT)
-                        .index(1)
-                        .help("Sets the input file to be used to create shares.")
-                        .required(true),
-                )
-                .arg(
-                    Arg::with_name(ARG_SHARES_TO_CREATE)
-                        .index(2)
-                        .help("The number of shares to create.")
-                        .required(true),
-                )
-                .arg(
-                    Arg::with_name(ARG_SHARES_NEEDED)
-                        .index(3)
-                        .help("The number of shares needed to recreate the secret.")
-                        .required(true),
-                )
-                .arg(
-                    Arg::with_name(ARG_OUTPUT_DIR)
-                        .short("d")
-                        .long("out-dir")
-                        .takes_value(true)
-                        .default_value(".")
-                        .help("The directory to output the shares and prime number")
-                        .required(false),
-                )
-                .arg(
-                    Arg::with_name(ARG_OUTPUT_STEM)
-                        .short("s")
-                        .long("stem")
-                        .takes_value(true)
-                        .help("Sets the stem of the output share files.")
-                        .long_help(
-                            "Sets the stem of the output share files. Example: 'file.out'
-file.out.s1, file.out.s2, and so on.",
-                        )
-                        .required(false),
-                )
-                .arg(
-                    Arg::with_name(ARG_OUTPUTS)
-                        .short("o")
-                        .long("outputs")
-                        .takes_value(true)
-                        .multiple(true)
-                        .conflicts_with(ARG_OUTPUT_STEM)
-                        .help("List of files to output shares to."),
-                )
-                .arg(
-                    Arg::with_name(ARG_NO_CONFIRM_RECON)
-                        .short("n")
-                        .long("no-confirm")
-                        .takes_value(false)
-                        .help(
-                            "Skip adding a hash to the end of the input to confirm reconstruction",
-                        )
-                        .required(false),
-                ),
-        )
-        // Reconstruct command:
-        .subcommand(
-            SubCommand::with_name(SUBCOMMAND_RECONSTRUCT)
-                .about("Reconstructs shares into a single file secret.")
-                .arg(
-                    Arg::with_name(ARG_NO_CONFIRM_RECON)
-                        .short("n")
-                        .long("no-confirm")
-                        .takes_value(false)
-                        .help("Don't assume there's a hash at the end of the reconstructed file.")
-                        .required(false),
-                )
-                .arg(
-                    Arg::with_name(ARG_OUTPUT_FILE)
-                        .index(1)
-                        .help("The file to output the generated secret.")
-                        .required(true),
-                )
-                .arg(
-                    Arg::with_name(ARG_INPUTS)
-                        .index(2)
-                        .multiple(true)
-                        .help("List of files to reconstruct from.")
-                        .required(true),
-                ),
-        )
-        .get_matches();
-
-    run_with_args(&matches);
+    
+    run_with_args(Cli::parse());
 }
 
 // This exists as a separate function so a GUI interface can be developed and make use of this
 // in the future.
-fn run_with_args(args: &ArgMatches) {
-    match args.subcommand() {
-        (SUBCOMMAND_SHARE, Some(sub_matches)) => {
+fn run_with_args(args: Cli) {
+    match args.command {
+        Commands::Share {
+            secret_input,
+            shares_to_create,
+            shares_needed,
+            output_dir,
+            output_stem,
+            outputs,
+            no_confirm
+        } => {
             // Create subcommand main arguments
-            let file = sub_matches.value_of(ARG_INPUT).unwrap();
 
-            match std::fs::metadata(file) {
+            match std::fs::metadata(&secret_input) {
                 Ok(metadata) => {
                     if metadata.len() == 0 {
                         println!(
                             "'{}' is an empty file. Secret cannot be an empty file. Aborting.",
-                            file
+                            secret_input.as_path().to_str().unwrap()
                         );
                         println!("Aborting");
                         return;
                     }
                 }
                 Err(e) => {
-                    println!("Error reading in secret input file '{}': {}", file, e);
-                    println!("Aborting");
+                    println!("Error reading in secret input file '{}': {}", secret_input.as_path().to_str().unwrap(), e);
                     return;
                 }
             }
+            let output_paths: Vec<PathBuf> = outputs.unwrap_or_else(|| {
 
-            let out_file_stem = sub_matches.value_of(ARG_OUTPUT_STEM).unwrap_or(
-                Path::new(sub_matches.value_of(ARG_INPUT).unwrap())
-                    .file_stem()
-                    .expect("Invalid input file path.")
-                    .to_str()
-                    .unwrap(),
-            );
+                let out_file_stem = output_stem.unwrap_or(
+                    secret_input
+                        .as_path()
+                        .file_stem()
+                        .expect("Invalid input file path.")
+                        .to_str()
+                        .unwrap()
+                        .to_string(),
+                );
+                (0..(shares_to_create as usize))
+                    .map(|share_num| output_dir.clone().unwrap().join(format!("{}_{}.sss", out_file_stem, share_num)).to_path_buf())
+                    .collect()
 
-            let out_dir = sub_matches.value_of(ARG_OUTPUT_DIR).unwrap_or(".");
-
-            let shares_to_create = sub_matches
-                .value_of(ARG_SHARES_TO_CREATE)
-                .unwrap()
-                .parse::<u8>()
-                .unwrap();
-
-            let shares_needed = sub_matches
-                .value_of(ARG_SHARES_NEEDED)
-                .unwrap_or(sub_matches.value_of(ARG_SHARES_TO_CREATE).unwrap())
-                .parse::<u8>()
-                .unwrap();
-
-            let confirm = sub_matches.is_present(ARG_NO_CONFIRM_RECON);
+            });
 
             // Error checking of number of shares values
             if shares_to_create < shares_needed {
@@ -191,10 +145,8 @@ fn run_with_args(args: &ArgMatches) {
 
 
             // Create a vec of writable files for sharing.
-            let mut dests: Vec<Box<dyn Write>> = (0..(shares_to_create as usize))
-                .map(|share_num| {
-                    let path =
-                        Path::new(out_dir).join(format!("{}_{}.sss", out_file_stem, share_num));
+            let mut dests: Vec<Box<dyn Write>> = output_paths.into_iter()
+                .map(|path| {
                     Box::new(
                         std::fs::OpenOptions::new()
                             .create(true)
@@ -207,35 +159,33 @@ fn run_with_args(args: &ArgMatches) {
                     ) as Box<dyn Write>
                 })
                 .collect();
-            let file_src = File::open(file).expect("Failed to open secret file for sharing");
-            share_to_writables(file_src, &mut dests, shares_needed, shares_to_create, confirm)
+            let file_src = File::open(secret_input).expect("Failed to open secret file for sharing");
+            share_to_writables(file_src, &mut dests, shares_needed, shares_to_create, !no_confirm)
                 .expect("Failed to share secret.");
 
         }
-        (SUBCOMMAND_RECONSTRUCT, Some(sub_matches)) => {
+        Commands::Reconstruct {
+            recon_output, 
+            secret_inputs,
+            no_confirm,
+        } => {
             let mut src_len = 0u64;
-            let mut input_files: Vec<Box<dyn Read>> = sub_matches
-                .values_of(ARG_INPUTS)
-                .expect("No input values received?")
+            let mut input_files: Vec<Box<dyn Read>> = secret_inputs.into_iter()
                 .map(|path| {
-                    src_len = std::fs::metadata(&path).expect(&format!("Could not open file '{}'", &path)).len();
+                    src_len = std::fs::metadata(&path).expect(&format!("Could not open file '{}'", path.to_string_lossy())).len();
                     Box::new(
-                    File::open(&path).expect(&format!("Could not open file '{}'", &path))) as Box<dyn Read> 
+                    File::open(&path).expect(&format!("Could not open file '{}'", path.to_string_lossy()))) as Box<dyn Read> 
                 })
                 .collect();
             
-            let confirm = sub_matches.is_present(ARG_NO_CONFIRM_RECON);
-
-            let secret_out = sub_matches.value_of(ARG_OUTPUT_FILE).unwrap();
             let secret_dest = std::fs::OpenOptions::new()
                 .create(true)
                 .write(true)
-                .open(secret_out)
-                .expect(&format!("Failed to open file {} for writing", secret_out));
-            reconstruct_from_srcs(secret_dest, &mut input_files, src_len, confirm)
+                .open(&recon_output)
+                .expect(&format!("Failed to open file {} for writing", recon_output.to_string_lossy()));
+            reconstruct_from_srcs(secret_dest, &mut input_files, src_len, !no_confirm)
                 .expect("Reconstruction failed");
 
         }
-        _ => (), // No subcommand was run?
     }
 }
