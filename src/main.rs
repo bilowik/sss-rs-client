@@ -9,21 +9,6 @@ const CREATE_ABORT: &str = "Cannot finish creating shares";
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
-#[command(group(
-        ArgGroup::new("dir_stem")
-            .conflicts_with("outputs")
-            .args(&["output_dir", "output_stem"])
-        )
-    )
-]
-#[command(group(
-        ArgGroup::new("output_options")
-            .conflicts_with("outputs")
-            .args(&["outputs", "dir_stem"])
-            .required(true)
-        )
-    )
-]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -31,6 +16,13 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    #[command(group(
+            ArgGroup::new("output_options")
+                .args(&["outputs", "output_dir"])
+                .required(true)
+            )
+        )
+    ]
     Share {
         #[arg(help="The file to create shares from")]
         secret_input: PathBuf,
@@ -48,7 +40,7 @@ enum Commands {
         output_stem: Option<String>,
 
         
-        #[arg(short, long, help="List of output file names, entries must match <shares_to_create>")]
+        #[arg(short, long, help="List of output file names, entries must match <shares_to_create>", value_delimiter = ' ')]
         outputs: Option<Vec<PathBuf>>,
 
         #[arg(short, long, help="Disable verifiable reconstruction")]
@@ -58,7 +50,7 @@ enum Commands {
         #[arg(help = "The file to write the reconstruct out to")]
         recon_output: PathBuf,
 
-        #[arg(help = "List of files to use for reconstruction", required = true)]
+        #[arg(help = "List of files to use for reconstruction", required = true, value_delimiter = ' ')]
         secret_inputs: Vec<PathBuf>, 
 
         #[arg(short, long, help="Disable verifiable reconstruction")]
@@ -70,7 +62,7 @@ enum Commands {
 
 fn main() {
     
-    run_with_args(Cli::parse());
+    run_with_args(dbg!(Cli::parse()));
 }
 
 // This exists as a separate function so a GUI interface can be developed and make use of this
@@ -180,6 +172,7 @@ fn run_with_args(args: Cli) {
             
             let secret_dest = std::fs::OpenOptions::new()
                 .create(true)
+                .read(true)
                 .write(true)
                 .open(&recon_output)
                 .expect(&format!("Failed to open file {} for writing", recon_output.to_string_lossy()));
