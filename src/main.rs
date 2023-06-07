@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand, ArgGroup};
+use clap::{Parser, Subcommand};
 use sss_rs::wrapped_sharing::*;
 use std::fs::File;
 use std::io::{Read, Write};
@@ -16,13 +16,6 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    #[command(group(
-            ArgGroup::new("output_options")
-                .args(&["outputs", "output_dir"])
-                .required(true)
-            )
-        )
-    ]
     Share {
         #[arg(help="The file to create shares from")]
         secret_input: PathBuf,
@@ -34,14 +27,16 @@ enum Commands {
         shares_needed: u8,
         
         #[arg(short = 'd', long = "output-dir", help="The output directory")]
-        output_dir: Option<PathBuf>,
+        output_dir: PathBuf,
         
-        #[arg(short = 's', long = "output-stem")]
+        #[arg(short = 's', long = "output-stem", 
+              help="The filename stem for the shares (<OUTPUT_STEM>_<i>.<output_ext>), defaults to the stem of the input file.")]
         output_stem: Option<String>,
 
-        
-        #[arg(short, long, help="List of output file names, entries must match <shares_to_create>", value_delimiter = ' ')]
-        outputs: Option<Vec<PathBuf>>,
+        #[arg(short = 'e', long = "output-ext", default_value = "sss", 
+              help="The filename ext for the shares (<output_stem>_<i>.<OUTPUT_EXT>), defaults to 'sss'")]
+        output_ext: String,
+
 
         #[arg(short, long, help="Disable verifiable reconstruction")]
         no_confirm: bool,
@@ -75,7 +70,7 @@ fn run_with_args(args: Cli) {
             shares_needed,
             output_dir,
             output_stem,
-            outputs,
+            output_ext,
             no_confirm
         } => {
             // Create subcommand main arguments
@@ -96,7 +91,7 @@ fn run_with_args(args: Cli) {
                     return;
                 }
             }
-            let output_paths: Vec<PathBuf> = outputs.unwrap_or_else(|| {
+            let output_paths: Vec<PathBuf> = {
 
                 let out_file_stem = output_stem.unwrap_or(
                     secret_input
@@ -108,10 +103,10 @@ fn run_with_args(args: Cli) {
                         .to_string(),
                 );
                 (0..(shares_to_create as usize))
-                    .map(|share_num| output_dir.clone().unwrap().join(format!("{}_{}.sss", out_file_stem, share_num)).to_path_buf())
+                    .map(|share_num| output_dir.join(format!("{}_{}.{}", out_file_stem, share_num, output_ext)).to_path_buf())
                     .collect()
 
-            });
+            };
 
             // Error checking of number of shares values
             if shares_to_create < shares_needed {
