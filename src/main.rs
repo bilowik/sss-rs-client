@@ -8,24 +8,6 @@ const CREATE_ABORT: &str = "Cannot finish creating shares";
 
 const BUF_SIZE: usize = 8192;
 
-//struct BetterBufReader<T: Read> {
-//    size: usize,
-//    inner: BufReader<T>,
-//}
-//
-//impl<T: Read> BetterBufReader<T> {
-//    pub fn new(inner: BufReader<T>, size: usize) -> Self {
-//        Self {
-//            inner,
-//            size,
-//        }
-//    }
-//
-//    pub fn next(&mut self) -> Result<&[u8], std::io::Error> {
-//        self.inner.fill_buf()
-//    }
-//}
-
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
