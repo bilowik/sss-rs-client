@@ -143,8 +143,8 @@ fn run_with_args(args: Cli) {
                 println!("{}", CREATE_ABORT);
                 return;
             }
-
-            // Create a vec of writable files for sharing.
+                
+            // Build the sharer
             let mut sharer = output_paths
                 .into_iter()
                 .map(|path| {
